@@ -1,7 +1,6 @@
-
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Phone, UserPlus, X, Save, Settings, Music, Pencil, ChevronDown } from 'lucide-react';
+import { Phone, UserPlus, X, Save, Settings, Music, Pencil, ChevronDown, Check } from 'lucide-react';
 import { SoundType, Contact } from '../types';
 
 export const Contacts = () => {
@@ -14,7 +13,7 @@ export const Contacts = () => {
   // Form State
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
-  // newRelation stores the select value. If 'Other', we use customRelation.
+  // newRelation stores the selected category. If 'Other', we use customRelation input.
   const [newRelation, setNewRelation] = useState<string>('Family');
   const [customRelation, setCustomRelation] = useState('');
 
@@ -232,18 +231,21 @@ export const Contacts = () => {
 
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">{t('relation_label')}</label>
-                            <div className="relative">
-                                <select 
-                                    value={newRelation}
-                                    onChange={(e) => setNewRelation(e.target.value)}
-                                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-brand-500 focus:border-brand-500 appearance-none"
-                                >
-                                    <option value="Family">{t('relation_family')}</option>
-                                    <option value="Friend">{t('relation_friend')}</option>
-                                    <option value="Work">{t('relation_work')}</option>
-                                    <option value="Other">{t('relation_other')}</option>
-                                </select>
-                                <ChevronDown className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
+                            <div className="flex flex-wrap gap-2">
+                                {['Family', 'Friend', 'Work', 'Other'].map((rel) => (
+                                    <button
+                                        key={rel}
+                                        type="button"
+                                        onClick={() => setNewRelation(rel)}
+                                        className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border flex-1 ${
+                                            newRelation === rel 
+                                            ? 'bg-brand-500 text-white border-brand-500 shadow-md transform scale-105' 
+                                            : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                                        }`}
+                                    >
+                                        {t(`relation_${rel.toLowerCase()}`)}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
@@ -256,6 +258,7 @@ export const Contacts = () => {
                                     className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-brand-500 focus:border-brand-500"
                                     value={customRelation}
                                     onChange={(e) => setCustomRelation(e.target.value)}
+                                    autoFocus
                                 />
                             </div>
                         )}
