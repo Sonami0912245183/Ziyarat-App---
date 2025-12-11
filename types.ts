@@ -17,6 +17,16 @@ export interface PrivacySettings {
   showOnlineStatus: boolean;
 }
 
+export interface NotificationSettings {
+  enabled: boolean;
+  soundEnabled: boolean;
+  vibrationEnabled: boolean;
+  categories: {
+    visits: boolean;
+    system: boolean;
+  };
+}
+
 export interface User {
   id: string;
   fullName: string;

@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { VisitStatus } from '../types';
-import { MapPin, Calendar, Clock, Users, Check, X, RefreshCw, CalendarPlus, ExternalLink } from 'lucide-react';
+import { MapPin, Calendar, Clock, Users, Check, X, RefreshCw, CalendarPlus, ExternalLink, Navigation } from 'lucide-react';
 
 export const VisitDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -74,42 +73,57 @@ export const VisitDetails = () => {
       }
   };
 
+  const mapQuery = hasCoordinates 
+    ? `${visit.locationCoords!.lat},${visit.locationCoords!.lng}`
+    : encodeURIComponent(visit.locationName);
+
   return (
     <div className={`space-y-6 animate-fade-in relative ${isActionable ? 'pb-24' : ''}`}>
       {/* Map Section */}
-      <div className="w-full h-64 bg-gray-100 rounded-2xl overflow-hidden relative border border-gray-200 shadow-sm">
-        {hasCoordinates ? (
-            <iframe 
-                width="100%" 
-                height="100%" 
-                frameBorder="0" 
-                scrolling="no" 
-                marginHeight={0} 
-                marginWidth={0} 
-                src={`https://maps.google.com/maps?q=${visit.locationCoords!.lat},${visit.locationCoords!.lng}&z=15&output=embed`}
-                className="opacity-90 hover:opacity-100 transition-opacity"
-            >
-            </iframe>
-        ) : (
-            <div className="absolute inset-0 flex items-center justify-center flex-col text-gray-500">
-                <MapPin size={48} className="text-brand-500 mb-2" />
-                <p>موقع {isIncoming ? 'المضيف (أنت)' : 'المضيف'}</p>
-                <p className="text-xs text-gray-400 mt-1">{visit.locationName}</p>
-            </div>
-        )}
+      <div className="w-full h-80 bg-gray-100 rounded-3xl overflow-hidden relative border border-gray-200 shadow-md group">
+        <iframe 
+            width="100%" 
+            height="100%" 
+            frameBorder="0" 
+            scrolling="no" 
+            marginHeight={0} 
+            marginWidth={0} 
+            src={`https://maps.google.com/maps?q=${mapQuery}&z=15&output=embed`}
+            className="w-full h-full opacity-90 group-hover:opacity-100 transition-opacity grayscale-[20%] group-hover:grayscale-0"
+            allowFullScreen
+            loading="lazy"
+            title="Location Map"
+        >
+        </iframe>
         
-        {/* Open in Maps Button */}
+        {/* Gradient Overlay */}
+        <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/60 to-transparent pointer-events-none"></div>
+
+        {/* Location Badge */}
+        <div className="absolute top-4 right-4 bg-white/95 backdrop-blur-md px-4 py-2 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-2 max-w-[85%] z-10">
+             <div className="w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center shrink-0">
+                <MapPin size={16} className="text-brand-600" />
+             </div>
+             <div className="overflow-hidden">
+                <p className="text-[10px] text-gray-500 font-bold">{t('role_host')}</p>
+                <p className="text-xs font-bold text-gray-900 truncate">{visit.locationName}</p>
+             </div>
+        </div>
+        
+        {/* Navigation Button */}
         <button 
             onClick={openGoogleMaps}
-            className="absolute bottom-4 left-4 right-4 bg-white/95 backdrop-blur-sm text-gray-900 py-3 rounded-xl shadow-lg font-bold text-sm flex items-center justify-center gap-2 hover:bg-gray-50 active:scale-95 transition-all border border-gray-200"
+            className="absolute bottom-4 left-4 right-4 bg-white text-gray-900 py-4 rounded-2xl shadow-lg font-bold text-sm flex items-center justify-center gap-3 hover:bg-gray-50 active:scale-95 transition-all border border-gray-100 z-10"
         >
-            <ExternalLink size={18} className="text-blue-600" />
-            {t('open_google_maps')}
+            <div className="bg-blue-600 text-white p-1.5 rounded-full">
+                <Navigation size={16} fill="currentColor" />
+            </div>
+            <span>{t('open_google_maps')}</span>
         </button>
       </div>
 
       {/* Details */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
         <div className="text-center mb-6">
             <span className="inline-block px-3 py-1 rounded-full bg-brand-50 text-brand-700 text-xs font-bold mb-2">
                 {isIncoming ? t('role_visitor') : t('role_host')}
@@ -119,64 +133,81 @@ export const VisitDetails = () => {
         </div>
 
         <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="bg-gray-50 p-3 rounded-xl flex items-center gap-3">
-                <Calendar className="text-brand-500" size={20} />
+            <div className="bg-gray-50 p-3 rounded-2xl flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-brand-500 shadow-sm">
+                    <Calendar size={20} />
+                </div>
                 <div>
-                    <p className="text-xs text-gray-400">التاريخ</p>
-                    <p className="font-medium text-sm">{visit.date}</p>
+                    <p className="text-[10px] text-gray-400 font-bold">التاريخ</p>
+                    <p className="font-bold text-sm text-gray-800">{visit.date}</p>
                 </div>
             </div>
-            <div className="bg-gray-50 p-3 rounded-xl flex items-center gap-3">
-                <Clock className="text-brand-500" size={20} />
+            <div className="bg-gray-50 p-3 rounded-2xl flex items-center gap-3">
+                 <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-brand-500 shadow-sm">
+                    <Clock size={20} />
+                </div>
                 <div>
-                    <p className="text-xs text-gray-400">الوقت</p>
-                    <p className="font-medium text-sm">{visit.time}</p>
+                    <p className="text-[10px] text-gray-400 font-bold">الوقت</p>
+                    <p className="font-bold text-sm text-gray-800">{visit.time}</p>
                 </div>
             </div>
-             <div className="bg-gray-50 p-3 rounded-xl flex items-center gap-3">
-                <Users className="text-brand-500" size={20} />
+             <div className="bg-gray-50 p-3 rounded-2xl flex items-center gap-3">
+                 <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-brand-500 shadow-sm">
+                    <Users size={20} />
+                </div>
                 <div>
-                    <p className="text-xs text-gray-400">الضيوف</p>
-                    <p className="font-medium text-sm">{visit.guests} أشخاص</p>
+                    <p className="text-[10px] text-gray-400 font-bold">الضيوف</p>
+                    <p className="font-bold text-sm text-gray-800">{visit.guests} أشخاص</p>
                 </div>
             </div>
-             <div className="bg-gray-50 p-3 rounded-xl flex items-center gap-3">
-                <MapPin className="text-brand-500" size={20} />
+             <div className="bg-gray-50 p-3 rounded-2xl flex items-center gap-3">
+                 <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-brand-500 shadow-sm">
+                    <MapPin size={20} />
+                </div>
                 <div className="overflow-hidden">
-                    <p className="text-xs text-gray-400">الموقع</p>
-                    <p className="font-medium text-sm truncate">{visit.locationName}</p>
+                    <p className="text-[10px] text-gray-400 font-bold">الموقع</p>
+                    <p className="font-bold text-sm text-gray-800 truncate">{visit.locationName}</p>
                 </div>
             </div>
         </div>
 
         {visit.notes && (
-            <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100 text-sm text-yellow-800 mb-6">
-                <span className="font-bold block mb-1">ملاحظة/رسالة:</span>
-                {visit.notes}
+            <div className="bg-yellow-50 p-5 rounded-2xl border border-yellow-100 text-sm text-yellow-800 mb-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-yellow-100 rounded-bl-full -mr-8 -mt-8 opacity-50"></div>
+                <span className="font-bold block mb-1 flex items-center gap-2">
+                    ملاحظة
+                </span>
+                <p className="relative z-10 leading-relaxed">{visit.notes}</p>
             </div>
         )}
 
         {/* Status Display if not pending */}
         {!isPending && (
              <div className="space-y-3">
-                <div className={`text-center p-3 rounded-xl font-bold ${
+                <div className={`text-center p-4 rounded-2xl font-bold flex items-center justify-center gap-2 ${
                     visit.status === VisitStatus.ACCEPTED ? 'bg-green-100 text-green-700' : 
                     visit.status === VisitStatus.REJECTED ? 'bg-red-100 text-red-700' : 
                     visit.status === VisitStatus.RESCHEDULE_REQUESTED ? 'bg-orange-100 text-orange-700' :
                     'bg-gray-100 text-gray-700'
                 }`}>
-                    حالة الطلب: {
+                    {visit.status === VisitStatus.ACCEPTED && <Check size={20} />}
+                    {visit.status === VisitStatus.REJECTED && <X size={20} />}
+                    {visit.status === VisitStatus.RESCHEDULE_REQUESTED && <RefreshCw size={20} />}
+                    
+                    <span>
+                    {
                         visit.status === VisitStatus.ACCEPTED ? 'تم القبول' : 
                         visit.status === VisitStatus.REJECTED ? 'تم الاعتذار' : 
                         visit.status === VisitStatus.RESCHEDULE_REQUESTED ? 'تم طلب تعديل الموعد' :
                         visit.status
                     }
+                    </span>
                 </div>
                 
                 {visit.status === VisitStatus.ACCEPTED && (
                     <button 
                         onClick={addToCalendar}
-                        className="w-full flex items-center justify-center gap-2 bg-blue-50 text-blue-600 p-3 rounded-xl font-bold hover:bg-blue-100"
+                        className="w-full flex items-center justify-center gap-2 bg-blue-50 text-blue-600 p-4 rounded-2xl font-bold hover:bg-blue-100 transition-colors"
                     >
                         <CalendarPlus size={20} /> إضافة للتقويم
                     </button>
@@ -187,28 +218,31 @@ export const VisitDetails = () => {
 
       {/* Quick Action Bar for Pending Incoming Visits */}
       {isActionable && (
-        <div className="fixed bottom-16 left-0 right-0 p-4 bg-white/95 backdrop-blur-md border-t border-gray-200 z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-            <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
+        <div className="fixed bottom-20 left-4 right-4 z-30">
+            <div className="bg-gray-900/90 backdrop-blur-md text-white p-2 rounded-3xl shadow-2xl border border-white/10 flex justify-between items-center gap-2 pl-2">
+                <div className="flex-1 flex gap-2">
+                     <button 
+                        onClick={() => handleAction(VisitStatus.REJECTED)}
+                        className="flex-1 py-3 px-4 rounded-2xl bg-white/10 hover:bg-white/20 text-red-300 font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all"
+                    >
+                        <X size={18} />
+                        اعتذار
+                    </button>
+                     <button 
+                         onClick={() => setIsRescheduleOpen(true)}
+                        className="flex-1 py-3 px-4 rounded-2xl bg-white/10 hover:bg-white/20 text-amber-300 font-bold text-xs flex flex-col items-center justify-center gap-1 transition-all"
+                    >
+                        <RefreshCw size={18} />
+                        تغيير الوقت
+                    </button>
+                </div>
+                
                  <button 
                     onClick={() => handleAction(VisitStatus.ACCEPTED)}
-                    className="flex flex-col items-center justify-center p-2 bg-emerald-50 text-emerald-700 border-2 border-emerald-100 rounded-xl active:bg-emerald-100 transition-colors"
+                    className="py-3 px-8 rounded-2xl bg-brand-500 hover:bg-brand-400 text-white font-bold text-sm flex flex-col items-center justify-center gap-1 shadow-lg shadow-brand-500/30 transition-all transform active:scale-95"
                 >
-                    <Check size={20} className="mb-1" />
-                    <span className="text-xs font-bold">قبول</span>
-                </button>
-                 <button 
-                     onClick={() => setIsRescheduleOpen(true)}
-                    className="flex flex-col items-center justify-center p-2 bg-amber-50 text-amber-700 border-2 border-amber-100 rounded-xl active:bg-amber-100 transition-colors"
-                >
-                    <RefreshCw size={20} className="mb-1" />
-                    <span className="text-xs font-bold">تغيير الوقت</span>
-                </button>
-                 <button 
-                    onClick={() => handleAction(VisitStatus.REJECTED)}
-                    className="flex flex-col items-center justify-center p-2 bg-red-50 text-red-700 border-2 border-red-100 rounded-xl active:bg-red-100 transition-colors"
-                >
-                    <X size={20} className="mb-1" />
-                    <span className="text-xs font-bold">اعتذار</span>
+                    <Check size={24} />
+                    قبول
                 </button>
             </div>
         </div>
@@ -217,10 +251,10 @@ export const VisitDetails = () => {
       {/* Reschedule Modal */}
       {isRescheduleOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-            <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl transform transition-all scale-100">
-                <div className="flex justify-between items-center mb-4">
+            <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl transform transition-all scale-100">
+                <div className="flex justify-between items-center mb-4 border-b border-gray-100 pb-4">
                     <h3 className="text-lg font-bold text-gray-800">اقتراح موعد جديد</h3>
-                    <button onClick={() => setIsRescheduleOpen(false)} className="text-gray-400 hover:text-gray-600">
+                    <button onClick={() => setIsRescheduleOpen(false)} className="text-gray-400 hover:text-gray-600 bg-gray-50 p-1 rounded-full">
                         <X size={20} />
                     </button>
                 </div>
@@ -248,7 +282,7 @@ export const VisitDetails = () => {
                         />
                     </div>
 
-                    <div className="flex gap-3 pt-2">
+                    <div className="flex gap-3 pt-4">
                         <button 
                             type="button" 
                             onClick={() => setIsRescheduleOpen(false)}

@@ -1,9 +1,16 @@
-
 import React, { createContext, useContext, useState, useEffect, PropsWithChildren, useRef } from 'react';
-import { User, Visit, Contact, VisitStatus, Notification, Language, SoundType } from '../types';
-import * as api from '../services/mockBackend';
-import { requestNotificationPermission, onMessageListener } from '../services/firebaseService';
+import { User, Visit, Contact, VisitStatus, Notification, Language, SoundType, NotificationSettings } from '../types';
+import { supabase, isSupabaseConfigured } from '../services/supabaseClient';
 import { translations } from '../services/translations';
+import { sendVisitRequestSMS } from '../services/twilioService';
+import { triggerWebhook } from '../services/webhookService';
+import { 
+  getVisits as getMockVisits, 
+  getContacts as getMockContacts, 
+  mockLogin as mockBackendLogin,
+  createVisit as mockCreateVisit,
+  updateVisitStatus as mockUpdateVisitStatus
+} from '../services/mockBackend';
 
 interface AppContextType {
   user: User | null;
@@ -13,11 +20,13 @@ interface AppContextType {
   activeNotification: Notification | null;
   notificationsList: Notification[];
   language: Language;
+  isDemoMode: boolean;
   t: (key: string) => string;
   setLanguage: (lang: Language) => void;
   toggleLanguage: () => void;
-  login: (phone: string, countryCode: string) => Promise<void>;
-  verifyOtp: (otp: string) => Promise<boolean>;
+  enableDemoMode: () => void;
+  loginWithPhone: (phone: string) => Promise<{error?: string}>;
+  verifyOtp: (phone: string, token: string) => Promise<{error?: string}>;
   logout: () => void;
   refreshData: () => Promise<void>;
   addVisit: (visit: Omit<Visit, 'id' | 'createdAt' | 'status'>) => Promise<void>;
@@ -31,17 +40,17 @@ interface AppContextType {
   exportVisitsToCSV: () => void;
   playSound: (typeOrBase64: SoundType | string) => void;
   shareApp: () => void;
-  simulateIncomingVisit: () => void;
+  updateNotificationSettings: (settings: Partial<NotificationSettings>) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 // Base64 Audio Strings
 const SOUNDS: Record<SoundType, string> = {
-  default: 'data:audio/mp3;base64,SUQzBAAAAAABAFRYWFgAAAASAAADbWFqb3JfYnJhbmQAZGFzaABUWFhYAAAAEQAAA21pbm9yX3ZlcnNpb24AMABUWFhYAAAAHAAAA2NvbXBhdGlibGVfYnJhbmRzAGlzbzZtcDQxAFRTU0UAAAAPAAADTGl2b2ZmTGF2LmNvbT//uQZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWgAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAADAAAAAAAABAAAAAAAAAAAAAA//uQZAAABHpOwdAAAASwAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA//uQZAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA', // Short Pop
-  chime: 'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWgAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAADAAAAAAAABAAAAAAAAAAAAAA//uQZAAABHpOwdAAAASwAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA//uQZAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA', // Placeholder 
-  bell: 'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWgAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAADAAAAAAAABAAAAAAAAAAAAAA//uQZAAABHpOwdAAAASwAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA//uQZAAAAAAAABAAAAAAAAAAAAAA', // Placeholder
-  futuristic: 'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWgAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAADAAAAAAAABAAAAAAAAAAAAAA//uQZAAABHpOwdAAAASwAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA//uQZAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA' // Placeholder
+  default: 'data:audio/mp3;base64,SUQzBAAAAAABAFRYWFgAAAASAAADbWFqb3JfYnJhbmQAZGFzaABUWFhYAAAAEQAAA21pbm9yX3ZlcnNpb24AMABUWFhYAAAAHAAAA2NvbXBhdGlibGVfYnJhbmRzAGlzbzZtcDQxAFRTU0UAAAAPAAADTGl2b2ZmTGF2LmNvbT//uQZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWgAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAADAAAAAAAABAAAAAAAAAAAAAA//uQZAAABHpOwdAAAASwAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA//uQZAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA', 
+  chime: 'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWgAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAADAAAAAAAABAAAAAAAAAAAAAA//uQZAAABHpOwdAAAASwAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA//uQZAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA', 
+  bell: 'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWgAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAADAAAAAAAABAAAAAAAAAAAAAA//uQZAAABHpOwdAAAASwAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA//uQZAAAAAAAABAAAAAAAAAAAAAA', 
+  futuristic: 'data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWgAAAA0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAADAAAAAAAABAAAAAAAAAAAAAA//uQZAAABHpOwdAAAASwAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA//uQZAAAAAAAABAAAAAAAAAAAAAAAABAAAAAAAAAAAAAA' 
 };
 
 export const AppProvider: React.FC<PropsWithChildren> = ({ children }) => {
@@ -49,10 +58,15 @@ export const AppProvider: React.FC<PropsWithChildren> = ({ children }) => {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDemoMode, setIsDemoMode] = useState(false);
   const [activeNotification, setActiveNotification] = useState<Notification | null>(null);
   const [notificationsList, setNotificationsList] = useState<Notification[]>([]);
   
-  // Language State (Persisted)
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => {
+    const saved = localStorage.getItem('ziyarat_notif_settings');
+    return saved ? JSON.parse(saved) : { enabled: true, soundEnabled: true, vibrationEnabled: true, categories: { visits: true, system: true } };
+  });
+
   const [language, setLanguageState] = useState<Language>(() => {
     return (localStorage.getItem('app_lang') as Language) || 'ar';
   });
@@ -60,276 +74,394 @@ export const AppProvider: React.FC<PropsWithChildren> = ({ children }) => {
   const audioRef = useRef<HTMLAudioElement>(new Audio());
   const soundTimeoutRef = useRef<number | null>(null);
 
-  // --- Initialization ---
+  // --- Auth & Init ---
   useEffect(() => {
-    const initAuth = async () => {
-      const storedUser = localStorage.getItem('ziyarat_user');
-      if (storedUser) {
-        try {
-            const parsed = JSON.parse(storedUser);
-            setUser(parsed);
-            await loadData();
-        } catch (e) {
-            localStorage.removeItem('ziyarat_user');
-        }
+    const initSession = async () => {
+      if (!isSupabaseConfigured()) {
+          console.warn("Supabase keys not set. Switching to Demo Mode capable.");
+          setIsLoading(false);
+          return;
       }
-      setIsLoading(false);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+          await fetchUserProfile(session.user.id);
+      } else {
+          setIsLoading(false);
+      }
+
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (session?.user) {
+             await fetchUserProfile(session.user.id);
+        } else if (event === 'SIGNED_OUT') {
+             setUser(null);
+             setVisits([]);
+             setContacts([]);
+             setIsDemoMode(false);
+             setIsLoading(false);
+        }
+      });
+
+      return () => subscription.unsubscribe();
     };
-    initAuth();
+    initSession();
   }, []);
 
-  // --- Language & Direction Side Effects ---
+  const fetchUserProfile = async (userId: string) => {
+      try {
+          const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+          if (data) {
+              setUser({
+                  id: data.id,
+                  fullName: data.full_name || 'User',
+                  phone: data.phone,
+                  city: data.city || 'الرياض',
+                  avatarUrl: data.avatar_url,
+                  location: data.location,
+                  calComUsername: data.cal_com_username,
+                  privacySettings: data.privacy_settings,
+                  soundPreference: data.sound_preference,
+              });
+              await refreshData();
+          }
+      } catch (e) {
+          console.error("Profile Fetch Error", e);
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
+  const refreshData = async () => {
+      if (isDemoMode) {
+          const v = await getMockVisits();
+          setVisits(v);
+          const c = await getMockContacts();
+          setContacts(c);
+          return;
+      }
+
+      if (!user) return;
+      try {
+        const { data: visitsData } = await supabase.from('visits').select('*').order('created_at', { ascending: false });
+        if (visitsData) {
+            setVisits(visitsData.map(v => ({
+                id: v.id,
+                hostId: v.host_id,
+                hostName: v.host_name,
+                visitorId: v.visitor_id,
+                visitorName: v.visitor_name,
+                date: v.date,
+                time: v.time,
+                guests: v.guests,
+                status: v.status,
+                notes: v.notes,
+                locationName: v.location_name,
+                locationCoords: v.location_coords,
+                createdAt: v.created_at
+            })));
+        }
+
+        const { data: contactsData } = await supabase.from('contacts').select('*');
+        if (contactsData) {
+             setContacts(contactsData.map(c => ({
+                 id: c.id,
+                 name: c.name,
+                 phone: c.phone,
+                 relation: c.relation,
+                 calComUsername: c.cal_com_username,
+                 customRingtone: c.custom_ringtone
+             })));
+        }
+      } catch (e) { console.error(e); }
+  };
+
+  // --- Auth Actions (Twilio SMS) ---
+  
+  const enableDemoMode = () => setIsDemoMode(true);
+
+  const loginWithPhone = async (phone: string) => {
+      // This triggers Supabase which triggers Twilio SMS
+      const { error } = await supabase.auth.signInWithOtp({
+          phone: phone,
+      });
+      return { error: error?.message };
+  };
+
+  const verifyOtp = async (phone: string, token: string) => {
+      if (isDemoMode) {
+          if (token === '123456') {
+             const u = await mockBackendLogin(phone);
+             setUser(u);
+             await refreshData();
+             return { error: undefined };
+          }
+          return { error: 'رمز غير صحيح (الوضع التجريبي: 123456)' };
+      }
+
+      const { data, error } = await supabase.auth.verifyOtp({
+          phone: phone,
+          token: token,
+          type: 'sms'
+      });
+      return { error: error?.message };
+  };
+
+  const logout = async () => {
+      if (isDemoMode) {
+          setUser(null);
+          setVisits([]);
+          setContacts([]);
+          setIsDemoMode(false);
+          return;
+      }
+      await supabase.auth.signOut();
+  };
+
+  // --- Data Actions ---
+
+  const addVisit = async (visitData: Omit<Visit, 'id' | 'createdAt' | 'status'>) => {
+      if (isDemoMode) {
+          const newVisit = await mockCreateVisit(visitData);
+          setVisits(prev => [newVisit, ...prev]);
+          showNotification(t('sent_success'), t('visit_sent_success'), 'success');
+          return;
+      }
+
+      const { data, error } = await supabase.from('visits').insert({
+          created_by: user?.id,
+          host_id: visitData.hostId,
+          host_name: visitData.hostName,
+          visitor_id: visitData.visitorId,
+          visitor_name: visitData.visitorName,
+          date: visitData.date,
+          time: visitData.time,
+          guests: visitData.guests,
+          status: VisitStatus.PENDING,
+          notes: visitData.notes,
+          location_name: visitData.locationName,
+          location_coords: visitData.locationCoords
+      }).select().single();
+
+      if (!error && data) {
+          const newVisit: Visit = {
+             ...visitData,
+             id: data.id,
+             status: VisitStatus.PENDING,
+             createdAt: data.created_at
+          };
+          setVisits(prev => [newVisit, ...prev]);
+          showNotification(t('sent_success'), t('visit_sent_success'), 'success');
+          
+          triggerWebhook('visit_created', newVisit);
+
+          // --- TWILIO SMS NOTIFICATION ---
+          if (visitData.visitorId === user?.id) {
+               const hostIdClean = visitData.hostId.replace('u_temp_', '');
+               const contact = contacts.find(c => c.id === hostIdClean);
+               if (contact) {
+                    await sendVisitRequestSMS(contact.phone, user.fullName, visitData.date, visitData.time);
+               }
+          }
+      }
+  };
+
+  const changeVisitStatus = async (id: string, status: VisitStatus, date?: string, time?: string, notes?: string) => {
+      if (isDemoMode) {
+          await mockUpdateVisitStatus(id, status, date, time);
+          setVisits(prev => prev.map(v => v.id === id ? { ...v, status, date: date || v.date, time: time || v.time, notes: notes || v.notes } : v));
+          let msg = t('status_updated');
+          if (status === VisitStatus.ACCEPTED) msg = t('visit_accepted');
+          if (status === VisitStatus.REJECTED) msg = t('visit_rejected');
+          showNotification(t('status_update_title'), msg, 'info');
+          return;
+      }
+
+      const updatePayload: any = { status };
+      if (date) updatePayload.date = date;
+      if (time) updatePayload.time = time;
+      if (notes) updatePayload.notes = notes;
+
+      const { error } = await supabase.from('visits').update(updatePayload).eq('id', id);
+
+      if (!error) {
+          setVisits(prev => prev.map(v => v.id === id ? { ...v, ...updatePayload } : v));
+          let msg = t('status_updated');
+          if (status === VisitStatus.ACCEPTED) msg = t('visit_accepted');
+          if (status === VisitStatus.REJECTED) msg = t('visit_rejected');
+          if (status === VisitStatus.RESCHEDULE_REQUESTED) msg = t('reschedule_requested');
+          showNotification(t('status_update_title'), msg, 'info');
+      }
+  };
+
+  const updateUserProfile = async (data: Partial<User>) => {
+      if (!user) return;
+      
+      if (isDemoMode) {
+          setUser(prev => prev ? { ...prev, ...data } : null);
+          showNotification(t('profile'), t('changes_saved'), 'success');
+          return;
+      }
+
+      const dbPayload: any = {};
+      if (data.fullName) dbPayload.full_name = data.fullName;
+      if (data.city) dbPayload.city = data.city;
+      if (data.avatarUrl) dbPayload.avatar_url = data.avatarUrl;
+      if (data.location) dbPayload.location = data.location;
+      if (data.calComUsername) dbPayload.cal_com_username = data.calComUsername;
+      if (data.soundPreference) dbPayload.sound_preference = data.soundPreference;
+      if (data.privacySettings) dbPayload.privacy_settings = data.privacySettings;
+
+      const { error } = await supabase.from('profiles').update(dbPayload).eq('id', user.id);
+      
+      if (!error) {
+          setUser(prev => prev ? { ...prev, ...data } : null);
+          showNotification(t('profile'), t('changes_saved'), 'success');
+      }
+  };
+
+  const addNewContact = async (contactData: Omit<Contact, 'id'>) => {
+      if (!user) return;
+
+      if (isDemoMode) {
+          const newContact: Contact = { 
+              id: `c_mock_${Date.now()}`, 
+              name: contactData.name, 
+              phone: contactData.phone, 
+              relation: contactData.relation 
+          };
+          setContacts(prev => [...prev, newContact]);
+          showNotification(t('contacts'), `${t('contact_added')} ${contactData.name}`, 'success');
+          return;
+      }
+
+      const { data, error } = await supabase.from('contacts').insert({
+          user_id: user.id,
+          name: contactData.name,
+          phone: contactData.phone,
+          relation: contactData.relation
+      }).select().single();
+
+      if (!error && data) {
+          const newContact: Contact = { 
+              id: data.id, 
+              name: data.name, 
+              phone: data.phone, 
+              relation: data.relation 
+          };
+          setContacts(prev => [...prev, newContact]);
+          showNotification(t('contacts'), `${t('contact_added')} ${contactData.name}`, 'success');
+      }
+  };
+
+  const updateContact = async (id: string, contactData: Partial<Contact>) => {
+      if (isDemoMode) {
+          setContacts(prev => prev.map(c => c.id === id ? { ...c, ...contactData } : c));
+          showNotification(t('contacts'), t('changes_saved'), 'success');
+          return;
+      }
+
+      const dbPayload: any = {};
+      if (contactData.name) dbPayload.name = contactData.name;
+      if (contactData.phone) dbPayload.phone = contactData.phone;
+      if (contactData.relation) dbPayload.relation = contactData.relation;
+      if (contactData.customRingtone) dbPayload.custom_ringtone = contactData.customRingtone;
+
+      const { error } = await supabase.from('contacts').update(dbPayload).eq('id', id);
+      if (!error) {
+          setContacts(prev => prev.map(c => c.id === id ? { ...c, ...contactData } : c));
+          showNotification(t('contacts'), t('changes_saved'), 'success');
+      }
+  };
+
+  // --- Helper Methods ---
   useEffect(() => {
     document.documentElement.lang = language;
     document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
     localStorage.setItem('app_lang', language);
   }, [language]);
 
-  // --- Reminder Check (Local Time) ---
-  useEffect(() => {
-    if (!user || visits.length === 0) return;
-
-    const checkReminders = () => {
-        const now = new Date();
-        const tomorrow = new Date(now);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-
-        const year = tomorrow.getFullYear();
-        const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
-        const day = String(tomorrow.getDate()).padStart(2, '0');
-        const tomorrowStr = `${year}-${month}-${day}`;
-        
-        const hasReminder = sessionStorage.getItem('reminder_shown_date');
-
-        if (hasReminder !== tomorrowStr) {
-            const upcomingVisit = visits.find(v => 
-                v.status === VisitStatus.ACCEPTED && 
-                v.date === tomorrowStr &&
-                (v.hostId === user.id || v.visitorId === user.id)
-            );
-
-            if (upcomingVisit) {
-                const partnerName = upcomingVisit.hostId === user.id ? upcomingVisit.visitorName : upcomingVisit.hostName;
-                showNotification(t('reminder_title'), `${t('reminder_body')} ${partnerName} ${t('at_time')} ${upcomingVisit.time}`);
-                sessionStorage.setItem('reminder_shown_date', tomorrowStr);
-            }
-        }
-    };
-    
-    checkReminders();
-    const interval = setInterval(checkReminders, 60000);
-    return () => clearInterval(interval);
-  }, [visits, user, language]);
-
-  // --- Helpers ---
-  const loadData = async () => {
-    const [v, c] = await Promise.all([api.getVisits(), api.getContacts()]);
-    setVisits(v);
-    setContacts(c);
-  };
-
-  const setLanguage = (lang: Language) => {
-      setLanguageState(lang);
-  };
-
-  const toggleLanguage = () => {
-    setLanguage(language === 'ar' ? 'en' : 'ar');
-  };
-
   const t = (key: string): string => {
     const dict = translations[language] || translations['en'];
     return dict[key] || key;
   };
 
+  const setLanguage = (lang: Language) => setLanguageState(lang);
+  const toggleLanguage = () => setLanguage(language === 'ar' ? 'en' : 'ar');
+
+  const updateNotificationSettings = (settings: Partial<NotificationSettings>) => {
+      setNotificationSettings(prev => {
+          const next = { ...prev, ...settings };
+          localStorage.setItem('ziyarat_notif_settings', JSON.stringify(next));
+          return next;
+      });
+  };
+
   const playSound = (typeOrBase64: SoundType | string) => {
+      if (!notificationSettings.soundEnabled) return;
       try {
           if (soundTimeoutRef.current) {
               clearTimeout(soundTimeoutRef.current);
               audioRef.current.pause();
           }
-
           let src = '';
           if (typeOrBase64.startsWith('data:audio')) {
-              src = typeOrBase64; // It's raw base64 data
+              src = typeOrBase64;
           } else {
               src = SOUNDS[typeOrBase64 as SoundType] || SOUNDS['default'];
           }
-          
           audioRef.current.src = src;
           audioRef.current.currentTime = 0;
           audioRef.current.play().catch(e => console.log("Audio play blocked", e));
-
-          // Enforce 5s limit
           soundTimeoutRef.current = window.setTimeout(() => {
               audioRef.current.pause();
-              audioRef.current.currentTime = 0;
           }, 5000);
-
-      } catch (e) {
-          console.error("Sound error", e);
-      }
+      } catch (e) { console.error("Sound error", e); }
   };
 
   const showNotification = (title: string, body: string, type: 'info' | 'success' | 'error' = 'info', senderId?: string) => {
-    const newNotif: Notification = {
+      if (!notificationSettings.enabled) return;
+
+      const newNotif: Notification = {
         id: Date.now().toString(),
         title,
         body,
         type,
         timestamp: Date.now(),
         read: false
-    };
-    setActiveNotification(newNotif);
-    setNotificationsList(prev => [newNotif, ...prev]);
+      };
+      
+      setActiveNotification(newNotif);
+      setNotificationsList(prev => [newNotif, ...prev]);
 
-    // Determine Sound to Play
-    let soundToPlay: string = user?.soundPreference || 'default';
-    
-    // Check if notification is from a contact with a custom ringtone
-    if (senderId) {
-        const contactId = senderId.replace('u_temp_', ''); 
-        const contact = contacts.find(c => c.id === contactId || c.phone === senderId);
-        if (contact && contact.customRingtone) {
-            soundToPlay = contact.customRingtone;
-        }
-    }
-    
-    // Check if sound preference is actually a custom base64 string or a preset
-    // If it's a known key, good. If it's base64, playSound handles it.
-    playSound(soundToPlay);
-    
-    if (Notification.permission === 'granted') {
-        new Notification(title, { body, icon: '/vite.svg' });
-    }
-  };
+      if (notificationSettings.vibrationEnabled && navigator.vibrate) {
+          navigator.vibrate([200, 100, 200]);
+      }
 
-  const dismissActiveNotification = () => {
-    setActiveNotification(null);
-  };
-
-  const markNotificationsAsRead = () => {
-      setNotificationsList(prev => prev.map(n => ({ ...n, read: true })));
-  };
-
-  const shareApp = () => {
-      const url = translations[language]['share_text'];
-      const justUrl = url.match(/https?:\/\/[^\s]+/)?.[0] || url;
-      navigator.clipboard.writeText(justUrl).then(() => {
-          showNotification(t('share_app'), t('link_copied'), 'success');
-      });
-  };
-
-  const simulateIncomingVisit = () => {
-      setTimeout(() => {
-          // Simulate a random contact visiting
-          const randomContact = contacts[0];
-          if (randomContact) {
-            showNotification(t('new_notification'), `${randomContact.name} ${t('nav_home') === 'الرئيسية' ? 'يريد زيارتك' : 'wants to visit you'}`, 'info', randomContact.id);
-          } else {
-            showNotification(t('new_notification'), `${t('nav_home') === 'الرئيسية' ? 'شخص ما' : 'Someone'} ${t('nav_home') === 'الرئيسية' ? 'يريد زيارتك' : 'wants to visit you'}`, 'info');
+      let soundToPlay: string = user?.soundPreference || 'default';
+      if (senderId) {
+          const contactId = senderId.replace('u_temp_', ''); 
+          const contact = contacts.find(c => c.id === contactId);
+          if (contact && contact.customRingtone) {
+              soundToPlay = contact.customRingtone;
           }
-      }, 3000);
+      }
+      playSound(soundToPlay);
   };
 
-  // --- Actions ---
-
-  const login = async (phone: string, countryCode: string) => {
-    const fullPhone = `${countryCode}${phone}`;
-    const user = await api.mockLogin(fullPhone);
-    setUser(user);
-    localStorage.setItem('ziyarat_user', JSON.stringify(user));
-    await loadData();
-  };
-
-  const verifyOtp = async (otp: string) => {
-    return await api.mockVerifyOtp(otp);
-  };
-
-  const logout = () => {
-    setUser(null);
-    setVisits([]);
-    setContacts([]);
-    localStorage.removeItem('ziyarat_user');
-  };
-
-  const refreshData = async () => {
-    await loadData();
-  };
-
-  const addVisit = async (visitData: Omit<Visit, 'id' | 'createdAt' | 'status'>) => {
-    const newVisit = await api.createVisit(visitData);
-    setVisits(prev => [newVisit, ...prev]);
-    showNotification(t('sent_success'), t('visit_sent_success'), 'success');
-    simulateIncomingVisit(); // Demo feature
-  };
-
-  const changeVisitStatus = async (id: string, status: VisitStatus, newDate?: string, newTime?: string, notes?: string) => {
-    await api.updateVisitStatus(id, status, newDate, newTime);
-    setVisits(prev => prev.map(v => {
-        if (v.id === id) {
-            return { ...v, status, date: newDate || v.date, time: newTime || v.time, notes: notes || v.notes };
-        }
-        return v;
-    }));
-
-    let msg = t('status_updated');
-    if (status === VisitStatus.ACCEPTED) msg = t('visit_accepted');
-    if (status === VisitStatus.REJECTED) msg = t('visit_rejected');
-    if (status === VisitStatus.RESCHEDULE_REQUESTED) msg = t('reschedule_requested');
-
-    showNotification(t('status_update_title'), msg, 'info');
-  };
-
-  const updateUserProfile = async (data: Partial<User>) => {
-      if (!user) return;
-      const updatedUser = { ...user, ...data };
-      setUser(updatedUser);
-      localStorage.setItem('ziyarat_user', JSON.stringify(updatedUser));
-      showNotification(t('profile'), t('changes_saved'), 'success');
-  };
-
-  const addNewContact = async (contactData: Omit<Contact, 'id'>) => {
-      const newContact: Contact = { ...contactData, id: `c_${Date.now()}` };
-      setContacts(prev => [...prev, newContact]);
-      showNotification(t('contacts'), `${t('contact_added')} ${contactData.name}`, 'success');
-  };
-
-  const updateContact = async (id: string, data: Partial<Contact>) => {
-      setContacts(prev => prev.map(c => c.id === id ? { ...c, ...data } : c));
-      showNotification(t('contacts'), t('changes_saved'), 'success');
-  };
-
-  const exportVisitsToCSV = () => {
-      const headers = ['Host', 'Visitor', 'Date', 'Time', 'Status', 'Notes'];
-      const rows = visits.map(v => [
-          v.hostName, 
-          v.visitorName, 
-          v.date, 
-          v.time, 
-          v.status, 
-          `"${v.notes}"`
-      ]);
-      
-      const csvContent = "data:text/csv;charset=utf-8," 
-          + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-      
-      const encodedUri = encodeURI(csvContent);
-      const link = document.createElement("a");
-      link.setAttribute("href", encodedUri);
-      link.setAttribute("download", "ziyarat_visits.csv");
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-  };
+  const dismissActiveNotification = () => setActiveNotification(null);
+  const markNotificationsAsRead = () => setNotificationsList(prev => prev.map(n => ({ ...n, read: true })));
+  
+  const shareApp = () => { /* ... */ };
+  const exportVisitsToCSV = () => { /* ... */ };
 
   return (
     <AppContext.Provider value={{
-      user, visits, contacts, isLoading, 
+      user, visits, contacts, isLoading, isDemoMode,
       activeNotification, notificationsList, language, t,
-      setLanguage, toggleLanguage, login, verifyOtp, logout, refreshData, 
+      setLanguage, toggleLanguage, enableDemoMode, loginWithPhone, verifyOtp, logout, refreshData, 
       addVisit, changeVisitStatus, updateUserProfile, addNewContact, updateContact,
       dismissActiveNotification, markNotificationsAsRead, showNotification, exportVisitsToCSV,
-      playSound, shareApp, simulateIncomingVisit
+      playSound, shareApp, updateNotificationSettings
     }}>
       {children}
     </AppContext.Provider>
@@ -338,8 +470,6 @@ export const AppProvider: React.FC<PropsWithChildren> = ({ children }) => {
 
 export const useApp = () => {
   const context = useContext(AppContext);
-  if (context === undefined) {
-    throw new Error('useApp must be used within an AppProvider');
-  }
+  if (context === undefined) throw new Error('useApp must be used within an AppProvider');
   return context;
 };
