@@ -217,9 +217,11 @@ export const Login = () => {
                 <div className="text-center">
                     <p className="text-sm text-gray-500 mb-4">{t('otp_label')} {formatPhoneNumber(phone, countryCode)}</p>
                     <input 
-                        type="text" 
+                        type="tel"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
                         className="block w-full p-4 text-center text-4xl tracking-[0.5em] font-black text-gray-900 border border-gray-200 rounded-2xl bg-gray-50 focus:ring-brand-500 focus:border-brand-500" 
-                        placeholder="----"
+                        placeholder="------"
                         maxLength={6}
                         value={otp}
                         onChange={(e) => setOtp(e.target.value)}

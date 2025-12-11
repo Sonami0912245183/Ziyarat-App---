@@ -181,8 +181,12 @@ export const AppProvider: React.FC<PropsWithChildren> = ({ children }) => {
 
   const loginWithPhone = async (phone: string) => {
       // This triggers Supabase which triggers Twilio SMS
+      // We explicitly set channel to 'sms' to support Verify Service if configured
       const { error } = await supabase.auth.signInWithOtp({
           phone: phone,
+          options: {
+              channel: 'sms'
+          }
       });
       return { error: error?.message };
   };
